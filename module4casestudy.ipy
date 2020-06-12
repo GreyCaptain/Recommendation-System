@@ -1,0 +1,316 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jun  3 00:22:11 2020
+
+@author: Buuju
+"""
+
+!pip install --upgrade pip
+!pip install surprise==0.1
+
+import pandas as pd
+import matplotlib
+from surprise import Dataset, SVD, NormalPredictor, BaselineOnly, KNNBasic, NMF
+from surprise.model_selection import cross_validate, KFold
+%matplotlib inline
+print('\n\nImports successful!')
+
+data = Dataset.load_builtin('ml-100k')
+print('\n\nData load successful!')
+
+# Get the ratings file from the data object
+# This is just a filename that has all the data stored in it
+ratings_file = data.ratings_file
+
+# Load that table using pandas, a commmon python data loading tool
+# We set the column names manually here
+col_names = ['user_id', 'item_id', 'rating', 'timestamp']
+raw_data = pd.read_table(ratings_file, names=col_names)
+
+# Get the rating column
+ratings = raw_data.rating
+
+# Generate a bar plot/histogram of ratings
+ratings.value_counts().sort_index().plot.bar()
+print('\n\nHistogram generation successful!')
+
+# Calculate the mean
+mean = sum(ratings)/len(ratings)
+
+#Calculate the standard deviation
+tot = sum((scr-mean)**2 for scr in ratings)
+std = (tot / len(ratings)) ** 0.5
+
+# Get the users column and generate a bar plot/histogram of users
+users = raw_data.user_id
+users.value_counts().sort_index().plot.bar()
+print('\n\nHistogram generation successful!')
+
+# Get the movie titles column and generate a bar plot/histogram of movie titles
+items = raw_data.item_id
+items.value_counts().sort_index().plot.bar()
+print('\n\nHistogram generation successful!')
+
+'''
+CONCLUSION 1: 
+There are 100000 ratings in total, the distribution of which 
+is skewed towards right, with a mean of 3.52986 and standard deviation of
+1.12567. A good fraction of ratings are 3 (27.15%), 4 (34.17%), or 5 (21.2%). 
+Less than 18% of ratings are 1 (about 6.11%) or 2 (about 11.37%). However, 
+there is enough variation in the distribution that a simple recommendation 
+algorithm will not be able to get accurate predictions upon missing entry.
+'''
+
+# Create random model object
+model_random = NormalPredictor()
+print('\n\nRandom Model creation successful!')
+
+# Train on data using cross-validation with k=5 folds, measuring the RMSE
+model_random_results = cross_validate(model_random, data, measures=['RMSE'], cv=5, verbose=True)
+print('\n\nRandom Model training successful!')
+
+# Create user-user model object
+model_user = KNNBasic(sim_options={'user_based': True})
+print('\n\nUser-User Model creation successful!')
+
+# Train on data using cross-validation with k=5 folds, measuring the RMSE
+# Note, this may have a lot of print output
+# You can set verbose=False to prevent this from happening
+model_user_results = cross_validate(model_user, data, measures=['RMSE'], cv=5, verbose=True)
+print('\n\nUser-User Model training successful!')
+
+# Create item-item model object
+model_item = KNNBasic(sim_options={'user_based': False})
+print('\n\nItem-Item Model creation successful!')
+
+
+# Train on data using cross-validation with k=5 folds, measuring the RMSE
+# Note, this may have a lot of print output
+# You can set verbose=False to prevent this from happening
+model_item_results = cross_validate(model_item, data, measures=['RMSE'], cv=5, verbose=True)
+print('\n\nItem-Item Model training successful!')
+
+''' 
+CONCLUSION 2: 
+The user-user and item-item models presented comparable results
+in terms of RMSE. Item-item model performs just slightly better than the user-user model.
+In the user-user model, when the inner products of 2 row are taken, there is less overlapping. 
+A few users rated many movies, but most of them rated a much smaller number of movies. However, 
+when we make a similar assessment regarding the movies, if a few movies have a lot of ratings 
+then they're probably popular, which in turn means that they are likely to be watched and then 
+rated. Therefore, it makes sense to focus our efforts on these movies. For these movies, we 
+have a lot of ratings. And therefore, we can take the inner products between columns rather 
+than rows. It has a significant advantage over taking in  products between rows. There are 
+many more collisions, giving us more realistic results, more accurate measure of similarity
+between popular movies, thus minimizing the error rate more. Therefore, we can conclude that 
+item based personalization is much more predictive than the user based ones. Actually item-item 
+model would perform better if the number of user were significantly  greater than the number of 
+movies, like in Netflix.
+
+On the other hand, random model does not include any sort of personalization, and it has a very 
+high error rate due to the skew of the distribution. Picking a any random number from the list 
+[1, 2, 3, 4, 5] has a probability of 20% of being chosen, since this is a uniform distribution. 
+The mean distribution of random draws from this list would have a mean value of 3, which is 
+different than the population mean. However since the distribution of the population is different 
+than the random draw of 5 numbers (1, 2, 3, 4, 5), it would cause a significant error, evidenced 
+by the test we conducted. In other words, the variation in the population distribution in our data 
+cannot allow a simple recommendation algorithm to get accurate predictions upon missing entry. 
+However, this is a good start to establish a baseline and compare our algorithms and, user-user 
+and item-item models provide significantly better results, item-item model being even better than 
+the user-user model.
+'''
+
+# Create SVD model object
+model_matrix = SVD()
+print('\n\nSVD Model creation successful!')
+
+# Train on data using cross-validation with k=5 folds, measuring the RMSE
+# Note, this may take some time (2-3 minutes) to train, so please be patient
+model_matrix_results = cross_validate(model_matrix, data, measures=['RMSE'], cv=5, verbose=True)
+print('\n\nSVD Model training successful!')
+
+'''
+CONCLUSION 3: 
+Matrix factorization is a class of collaborative filtering algorithms used in 
+recommendation systems. They work by decomposing the user-item interaction matrix into the 
+product of two lower dimensionality rectangular matrices. These are based on viewing the user
+movie rating matrix as having low rank structure. It is a step further from the user-user and 
+item-item models with an improved RMSE value. In the user-user and item-item models, we were 
+using inner products and K-Nearest Neighbors. However using Singular Value Decomposition 
+allows us to identify the user prototypes and come up with a more refined result. The SVD 
+is very robust to noise and can represent polarized tastes, which is the reason of the improved 
+RMSE value. In a way, each user-item pair corresponds to a stereotypical rating pattern.
+'''
+
+def precision_recall_at_k(predictions, k=10, threshold=3.5):
+    '''Return precision and recall @ k metrics for each user.'''
+
+    # First map the predictions to each user.
+    user_est_true = dict()
+    for uid, _, true_r, est, _ in predictions:
+        current = user_est_true.get(uid, list())
+        current.append((est, true_r))
+        user_est_true[uid] = current
+
+    precisions = dict()
+    recalls = dict()
+    for uid, user_ratings in user_est_true.items():
+
+        # Sort user ratings by estimated value
+        user_ratings.sort(key=lambda x: x[0], reverse=True)
+
+        # Number of relevant items
+        n_rel = sum((true_r >= threshold) for (_, true_r) in user_ratings)
+
+        # Number of recommended items in top k
+        n_rec_k = sum((est >= threshold) for (est, _) in user_ratings[:k])
+
+        # Number of relevant and recommended items in top k
+        n_rel_and_rec_k = sum(((true_r >= threshold) and (est >= threshold))
+                              for (est, true_r) in user_ratings[:k])
+
+        # Precision@K: Proportion of recommended items that are relevant
+        precisions[uid] = n_rel_and_rec_k / n_rec_k if n_rec_k != 0 else 1
+
+        # Recall@K: Proportion of relevant items that are recommended
+        recalls[uid] = n_rel_and_rec_k / n_rel if n_rel != 0 else 1
+
+    return precisions, recalls
+
+print('\n\nFunction creation successful!')
+
+# Make list of k values
+K = [5, 10]
+
+# Make list of models
+models = [model_random, model_user, model_item, model_matrix]
+
+# Create k-fold cross validation object
+kf = KFold(n_splits=5)
+
+for k in K:
+    for model in models:
+        print(f'>>> k={k}, model={model.__class__.__name__}')
+        # Run folder and take average
+        p = []
+        r = []
+        for trainset, testset in kf.split(data):
+            model.fit(trainset)
+            predictions = model.test(testset, verbose=False)
+            precisions, recalls = precision_recall_at_k(predictions, k=k, threshold=3.5)
+
+            # Precision and recall can then be averaged over all users
+            p.append(sum(prec for prec in precisions.values()) / len(precisions))
+            r.append(sum(rec for rec in recalls.values()) / len(recalls))
+        
+        print('>>> precision:', round(sum(p) / len(p), 3))
+        print('>>> reccall  :', round(sum(r) / len(r), 3))
+        print('\n')
+
+print('\n\nPrecision and recall computation successful!')
+
+'''
+CONCLUSION 4: 
+As a quick introduction, precision and recall are binary metrics used to evaluate models with 
+binary output. Thus we need a way to translate our numerical problem (ratings usually from 1 to 5) 
+into a binary problem (relevant and not relevant items). To do the translation we have assumed 
+that any true rating above 3.5 corresponds to a relevant item and any true rating below 3.5 is 
+irrelevant.
+A relevant item for a specific user-item pair means that this item is a good recommendation for 
+the user in question. 3.5 is the threshold we choose, which makes sense as it is not meaningful 
+to recommend a mediocre movie.
+A relevant item is defined such that it has a True/Actual rating >= 3.5, whereas an irrelevant 
+item has a True/Actual rating < 3.5. Similarly, a recommended item has a predicted rating >= 3.5 
+and a non recommended item has a predicted rating < 3.5.
+Precision at K is the proportion of recommended items in the top-K set that are relevant. 
+Recall at K is the proportion of relevant items found in the top-K recommendations.
+
+For K = 5;
+The random model performs poorly as expected. The precision is about 58.5% meaning that 58.5% 
+of the recommendation I make is relevant to the user. The recall is about 34%, meaning that 
+34% of the total number of the relevant items appear in the top-5 results. The user-user model 
+performs much better with a precision of 76.5% and a recall of 45.7%. The item-item model 
+performs even better with a precision of 81.8% and a recall of 38.9%. However, SVD performs 
+worse than item-item model with a precision of 78% and a recall of 43.1%. Its precision is 
+better but the recall is worse than user-user model.
+
+For K = 10;
+The random model performs just as poor as in the case where K=5 regarding the precision, which
+is about 58.5%. The recall is about 44.1%, that is better than K=5 case. The user-user model
+performs much better with a precision of 73.7% and a recall of 59.3%. The item-item model 
+performs even better with a precision of 78.8% and a recall of 53.6%. However, SVD performs 
+worse than item-item model with a precision of 75.9% and a recall of 56.2%. Its precision is 
+better but the recall is worse than user-user model.
+To sum up, as K increases, the recall values improve but the precision values slightly decrease
+for each of the models. Item-item model gave the best result (=lowest misclassification rate) 
+for both values of K (5 and 10) which is different than what we observed for RMSE values where 
+the best RMSE was obtained with SVD. With the item-item model, we can conclude that almost 80% 
+of the recommendation we make is relevant to the user and, about 39% (for K = 5) and 56% 
+(for K = 10) of the total number of the relevant items appear in top results.
+'''
+
+def get_top_n(predictions, n=10):
+    '''Return the top-N recommendation for each user from a set of predictions.
+
+    Args:
+        predictions(list of Prediction objects): The list of predictions, as
+            returned by the test method of an algorithm.
+        n(int): The number of recommendation to output for each user. Default
+            is 10.
+
+    Returns:
+    A dict where keys are user (raw) ids and values are lists of tuples:
+        [(raw item id, rating estimation), ...] of size n.
+    '''
+
+    # First map the predictions to each user.
+    top_n = dict()
+    for uid, iid, true_r, est, _ in predictions:
+        current = top_n.get(uid, [])
+        current.append((iid, est))
+        top_n[uid] = current
+
+    # Then sort the predictions for each user and retrieve the k highest ones.
+    for uid, user_ratings in top_n.items():
+        user_ratings.sort(key=lambda x: x[1], reverse=True)
+        top_n[uid] = user_ratings[:n]
+
+    return top_n
+
+print('Function creation successful!')
+
+trainset = data.build_full_trainset()
+testset = trainset.build_anti_testset()
+print('\n\nTrainset and testset creation successful!')
+
+for model in models:
+    model.fit(trainset)
+    predictions = model.test(testset)
+    top_n = get_top_n(predictions, n=10)
+    # Print the first one
+    user = list(top_n.keys())[0]
+    print(f'model: {model}, {user}: {top_n[user]}')
+
+print('\n\nTop N computation successful!')
+
+'''
+CONCLUSION 5:
+The results of the random model seemed too optimistic and therefore a little bit unrealistic 
+for all the ratings were 5. As a user myself, if a recommendation system showed me a list of 
+5 stars straight, I would have thought that the system was "sketchy". A similar observation 
+also goes for user-user model. However towards the end of the top10 list I was finally able 
+to see a decimal number, making it slightly more convincing than the random model. In fact, 
+the item '603' appear both in random and SVD models. Since we have already established that 
+SVD model gives much accurate results with lower misclassification rate, it would be wiser 
+to pick SVD.
+
+Still, this wouldn't be my choice for building a generic content recommender for a company. 
+Both Item-item and SVD models gave more realistic results with decimal numbers sorted in 
+descending order. Given that RMSE value of SVD model was better than the Item-Item model 
+but the precision and recall values of Item-Item model was better than SVD model, the choice 
+of models seems like a "tie": either of them seems acceptable. However the ratings of 
+item-item model vary between 4.66 and 4.07 whereas the ratings of SVD vary between 4.68 and 
+4.38. Since SVD model recommended the contents with higher ratings and has a lower error value 
+and a remarkably well precision, I would pick SVD model as it would result in better customer 
+satisfaction and as a result, a higher revenue.
+'''
