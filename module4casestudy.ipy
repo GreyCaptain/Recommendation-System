@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Wed Jun  3 00:22:11 2020
-
-@author: Buuju
 """
 
 !pip install --upgrade pip
